@@ -51,10 +51,11 @@ Give an example
 
 Add additional notes about how to deploy this on a live system
 
-## Built With
+## Further Readings
 
 * [Raspberry PI IR Remote Control Setup](https://tutorials-raspberrypi.de/raspberry-pi-ir-remote-control/) - A comprehensive tutorial on setting up an Infrared sensor and -actor
 * [Raspberry PI 3 GPIO Board](https://www.elektronik-kompendium.de/sites/raspberry-pi/1907101.htm) - A schema of the Raspberry PI 3 GPIO board
+* [irrecord Manpage](https://manpages.debian.org/stretch/lirc/irrecord.1.en.html) - Manpage of the irrecord - command to use the IR receiver to decode remote control messages
 
 ## Authors
 
