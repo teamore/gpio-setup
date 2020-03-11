@@ -54,12 +54,11 @@ Add additional notes about how to deploy this on a live system
 ## Built With
 
 * [Raspberry PI IR Remote Control Setup](https://tutorials-raspberrypi.de/raspberry-pi-ir-remote-control/) - A comprehensive tutorial on setting up an Infrared sensor and -actor
+* [Raspberry PI 3 GPIO Board](https://www.elektronik-kompendium.de/sites/raspberry-pi/1907101.htm) - A schema of the Raspberry PI 3 GPIO board
 
 ## Authors
 
-* **Timor Kodal** - *Initial work* - [PurpleBooth](https://github.com/PurpleBooth)
-
-See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
+* **Timor Kodal** - *Initial work*
 
 ## License
 
