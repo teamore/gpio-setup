@@ -8,8 +8,9 @@ import os
 GPIO.setmode(GPIO.BCM)
 GPIO_PIR = 23
 
-Command_OFF = './codesend 4462028 -l 198 -p 0'
-Command_ON = './codesend 4462019 -l 198 -p 0'
+#Command_OFF = './codesend 4462028 -l 198 -p 0'
+Command_OFF = 'irsend SEND_ONCE TWEEN_LIGHT KEY_SUSPEND'
+Command_ON = './codesend 4462019 -l 198 -p 0 && irsend SEND_ONCE TWEEN_LIGHT KEY_POWER'
 
 print "PIR-Modul gestartet (CTRL-C to exit)"
 
