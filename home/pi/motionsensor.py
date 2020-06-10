@@ -9,6 +9,7 @@ import argparse
 import sys
 import subprocess
 import shlex
+import threading
 
 class TimedCommand:
   def __init__(self, command = 'irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN', periods = '00:00-23:59', repeat = True, priority = 1, wakeup = False, name = ''):
@@ -44,28 +45,89 @@ class TimedCommand:
       time = datetime.datetime.strptime(string, '%H:%M')
     return time
 
-# these commands are only executed if a recent motion has been detected
-timedCommands = [
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_RED', priority=5, repeat=False, name="Nachtruhe"), 
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PURPLE','08:00-22:00', priority=4, repeat=False, name="Tageszeit"),
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PINK','12:00-18:00', priority=3, repeat=False, name="Mahlzeit!"),
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN','15:15-15:30,18:00-18:03,18:12-18:15', priority=0, repeat=False, name="Test"),
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '20:31', priority=0, repeat=False, wakeup=True, name="Aufwachen!")
-]
+class TimedCommander:
+  def __init__(self):
+    self.lastTimedCommand = None
+    self.timedCommands = [
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_RED', priority=5, repeat=False, name="Nachtruhe"), 
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PURPLE','08:00-22:00', priority=4, repeat=False, name="Tageszeit"),
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PINK','12:00-18:00', priority=3, repeat=False, name="Mahlzeit!"),
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN','13:12-13:20', priority=0, repeat=False, name="Test"),
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '13:18', priority=0, repeat=False, wakeup=True, name="Aufwachen!")
+    ]
+  def run(self, active = False, forceRefresh = False):
+    toDo = None
+    for timedCommand in self.timedCommands:
+      if timedCommand.isDue() and (timedCommand.wakeup or active == True):
+        if toDo == None or timedCommand.priority < toDo.priority:
+          toDo = timedCommand
 
-# BCM GPIO-Referenen verwenden (anstelle der Pin-Nummern)
-# und GPIO-Eingang definieren
-GPIO.setmode(GPIO.BCM)
-GPIO_PIR = 23
+    if toDo != None:
+      if self.lastTimedCommand == None or toDo.repeat == True or forceRefresh == True:
+        log("Executing timed command ('"+toDo.name+":"+toDo.periods+"')")
+        execute(toDo.command)
+        self.lastTimedCommand = toDo
+      elif self.lastTimedCommand.command == toDo.command:
+        log("Skipped redundant timed command ('"+toDo.name+":"+toDo.periods+"')", 4)
+    else:
+        log("No timed commands due", 4)
 
-#Command_OFF = './codesend 4462028 -l 198 -p 0'
-COMMAND_OFF = 'irsend SEND_ONCE TWEEN_LIGHT KEY_SUSPEND'
-COMMAND_ON = 'irsend SEND_ONCE TWEEN_LIGHT KEY_POWER'
+class MotionDetector:
+  def __init__(self, interval = 1):
+    self.interval = interval
+    self.currentStatus = 0
+    self.recentStatus = 0
 
-COMMAND_INIT = 'irsend SEND_ONCE TWEEN_LIGHT KEY_FLASH'
+    self.commandOff = 'irsend SEND_ONCE TWEEN_LIGHT KEY_SUSPEND'
+    self.commandOn = 'irsend SEND_ONCE TWEEN_LIGHT KEY_POWER'
+    self.commandInit  = 'irsend SEND_ONCE TWEEN_LIGHT KEY_FLASH'
 
-# Set pin as input
-GPIO.setup(GPIO_PIR,GPIO.IN)
+    self.gpioPir = 23
+
+    self.init()
+
+  def init(self):
+    # BCM GPIO-Referenen verwenden (anstelle der Pin-Nummern)
+    # und GPIO-Eingang definieren
+    GPIO.setmode(GPIO.BCM)
+
+    # Set pin as input
+    GPIO.setup(self.gpioPir,GPIO.IN)
+
+    os.system('cd /home/pi/');
+
+    execute(self.commandOn)
+    time.sleep(0.2)
+
+    execute(self.commandInit)
+    time.sleep(1.2)
+
+    execute(self.commandOff)
+
+    time.sleep(0.5)
+
+  def run(self):
+    self.recentStatus = self.currentStatus
+    self.currentStatus = GPIO.input(self.gpioPir)
+    if self.currentStatus != self.recentStatus:
+      log ("New IR Status '"+str(self.currentStatus)+"' detected (old status '"+str(self.recentStatus)+"')", 3)
+    else:
+      log ("Current IR Status '"+str(self.currentStatus)+"'", 4)
+
+    if self.currentStatus == 1 and self.recentStatus == 0:
+      # PIR wurde getriggert
+      execute(self.commandOn);
+      # @TODO: lastTimedCommand = None
+      log("Movement detected!")
+    elif self.currentStatus == 0 and self.recentStatus == 1:
+      # PIR wieder im Ruhezustand
+      log("Infrared Movement Detection Ready ...")
+      execute(self.commandOff);
+
+  def terminate(self):
+    log("Terminating Infrared Movement Detection ...")
+    execute(self.commandOff)
+    GPIO.cleanup()
 
 # Initialisierung
 read  = 0
@@ -153,59 +215,15 @@ try:
   if logfileName:
     log("Using file '"+logfileName+"' with mode '"+mode+"' for log messages...",3)
 
-  execute(COMMAND_ON)
-  time.sleep(0.2)
+  md = MotionDetector()
+  tc = TimedCommander()
 
-  execute(COMMAND_INIT)
-  time.sleep(1.2)
-
-  os.system('cd /home/pi/');
-  execute(COMMAND_OFF)
-
-  time.sleep(0.5)
-
-  # Endlosschleife, Ende mit STRG-C
   while True:
-    # PIR-Status lesen
-    read = GPIO.input(GPIO_PIR)
-    if state != read:
-      log ("New IR Status '"+str(read)+"' detected (old status '"+str(state)+"')", 3)
-    else:
-      log ("Current IR Status '"+str(read)+"'", 4)
-
-    if read == 1 and state == 0:
-      # PIR wurde getriggert
-      execute(COMMAND_ON);
-      lastTimedCommand = None
-      log("Movement detected!")
-    elif read == 0 and state == 1:
-      # PIR wieder im Ruhezustand
-      log("Infrared Movement Detection Ready ...")
-      execute(COMMAND_OFF);
-    
-    toDo = None
-    for timedCommand in timedCommands:
-      if timedCommand.isDue() and (timedCommand.wakeup or read == 1):
-        if toDo == None or timedCommand.priority < toDo.priority:
-          toDo = timedCommand
-
-    if toDo != None:
-      if lastTimedCommand == None or toDo.repeat == True:
-        log("Executing timed command ('"+toDo.name+":"+toDo.periods+"')")
-        execute(toDo.command)
-        lastTimedCommand = toDo
-      elif lastTimedCommand.command == toDo.command:
-        log("Skipped redundant timed command ('"+toDo.name+":"+toDo.periods+"')", 4)
-    else:
-        log("No timed commands due", 4)
-
-    state = read
-    # kleine Pause
+    md.run()
+    tc.run(active = (md.currentStatus == 1),forceRefresh = (md.currentStatus == 1 and md.recentStatus == 0))
     time.sleep(intervalMotionDetection)
 
 except KeyboardInterrupt:
   # Programm beenden
-  log("Terminating Infrared Movement Detection ...")
-  execute(COMMAND_OFF)
-  GPIO.cleanup()
+  md.terminate()
 
