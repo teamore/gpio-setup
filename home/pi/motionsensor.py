@@ -8,13 +8,16 @@ import datetime
 import argparse
 import sys
 import subprocess
+import shlex
 
 class TimedCommand:
-  def __init__(self, command = 'irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN', periods = '00:00-23:59', repeat = True, priority = 1):
+  def __init__(self, command = 'irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN', periods = '00:00-23:59', repeat = True, priority = 1, wakeup = False, name = ''):
     self.periods = periods
     self.command = command
     self.repeat = repeat
     self.priority = priority
+    self.wakeup = wakeup
+    self.name = name if name else command
   def isDue(self):
     periods = self.periods.split(",")
     match = 0
@@ -26,8 +29,8 @@ class TimedCommand:
     times = period.split("-")
     now = datetime.datetime.now()
     if len(times) == 1:
-      t = self.createTime(times[0])
-      if now.time()>=t.time() and now.time()<=t.time():
+      t = self.createTimeFromString(times[0])
+      if now.time()>=t.time() and now.time()<=(t + datetime.timedelta(seconds=60)).time():
         return True      
     else:
       t1 = self.createTimeFromString(times[0])
@@ -43,13 +46,11 @@ class TimedCommand:
 
 # these commands are only executed if a recent motion has been detected
 timedCommands = [
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_RED', priority=2, repeat=False), 
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PURPLE','08:00-22:00', priority=1, repeat=False),
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN','15:15-15:30,18:00-18:03,18:12-18:15', priority=0, repeat=False)
-]
-# these commands are always executed, even if the motion detector is in idle mode
-idleCommands = [
-  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '18:00', priority=2, repeat=False)
+  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_RED', priority=5, repeat=False, name="Nachtruhe"), 
+  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PURPLE','08:00-22:00', priority=4, repeat=False, name="Tageszeit"),
+  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PINK','12:00-18:00', priority=3, repeat=False, name="Mahlzeit!"),
+  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN','15:15-15:30,18:00-18:03,18:12-18:15', priority=0, repeat=False, name="Test"),
+  TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '20:31', priority=0, repeat=False, wakeup=True, name="Aufwachen!")
 ]
 
 # BCM GPIO-Referenen verwenden (anstelle der Pin-Nummern)
@@ -74,6 +75,8 @@ logfileName = ""
 lastTimedCommand = None
 logfile = ""
 mode = "a+"
+intervalMotionDetection = 1
+intervalTimedCommands = 5
 
 # Make sure the timezone is set correctly (e.g. sudo timedatectl set-timezone Europe/Berlin)
 
@@ -83,8 +86,9 @@ def getCurrentTimestamp(format = "%Y-%m-%d %H:%M:%S"):
 def execute(command):
   global verbosity
   global log
-  log("Executing Command: "+command)
-  os.system(command);
+  log("Executing Command: "+command+"...")
+  args = shlex.split(command+" &")
+  process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 def log(message, level = 2):
   global verbosity
@@ -97,13 +101,14 @@ def log(message, level = 2):
         logfile.write("["+getCurrentTimestamp()+"]: "+message+"\n")
         logfile.close()
     else:
-      print "["+getCurrentTimestamp()+"]: "+message
+      print("["+getCurrentTimestamp()+"]: "+message)
 
 def parseArguments():
   global verbosity
   global logfileName
   global logfile
   global mode
+  global intervalMotionDetection, intervalTimedCommands
   # Construct the argument parser
   ap = argparse.ArgumentParser()
 
@@ -116,7 +121,18 @@ def parseArguments():
      help="open logfile in specified file mode (use w+ to create new file and overwrite existing messages). default: a+ (append)")
   ap.add_argument("-o", "--overwrite", required=False, nargs='?', const='w+', default='',
      help="open logfile and overwrite existing messages (uses w+ when opening log file)")
+  ap.add_argument('-c', "--interval_commands", required=False, nargs='?', const=5, default=5,
+     help="specifies the refreshment interval for timed commands. default: 5 seconds")
+  ap.add_argument('-i', "--interval_detection", required=False, nargs='?', const=1, default=1,
+     help="specifies the motion detection interval. default: 1 second")
+
   args = vars(ap.parse_args())
+
+  if args['interval_commands']:
+    intervalTimedCommands = args['interval_commands'];
+
+  if args['interval_detection']:
+    intervalMotionDetection = args['interval_detection']
 
   if args['verbosity']:
     verbosity = int(args['verbosity'])
@@ -138,14 +154,15 @@ try:
     log("Using file '"+logfileName+"' with mode '"+mode+"' for log messages...",3)
 
   execute(COMMAND_ON)
-  execute(COMMAND_INIT)
+  time.sleep(0.2)
 
-  time.sleep(2)
+  execute(COMMAND_INIT)
+  time.sleep(1.2)
 
   os.system('cd /home/pi/');
   execute(COMMAND_OFF)
 
-  time.sleep(2)
+  time.sleep(0.5)
 
   # Endlosschleife, Ende mit STRG-C
   while True:
@@ -159,28 +176,32 @@ try:
     if read == 1 and state == 0:
       # PIR wurde getriggert
       execute(COMMAND_ON);
+      lastTimedCommand = None
       log("Movement detected!")
     elif read == 0 and state == 1:
       # PIR wieder im Ruhezustand
       log("Infrared Movement Detection Ready ...")
       execute(COMMAND_OFF);
     
-    if read == 1:
-      # checking for timedCommands and execute the one with the lowest priority value
-      toDo = None
-      for timedCommand in timedCommands:
-        if timedCommand.isDue():
-          if toDo == None or timedCommand.priority < toDo.priority:
-            toDo = timedCommand
-      if toDo != None:
-        if lastTimedCommand == None or lastTimedCommand.command != toDo.command or toDo.repeat == True:
-          log("Executing timed command ('"+toDo.periods+"')")
-          execute(toDo.command)
-          lastTimedCommand = toDo
+    toDo = None
+    for timedCommand in timedCommands:
+      if timedCommand.isDue() and (timedCommand.wakeup or read == 1):
+        if toDo == None or timedCommand.priority < toDo.priority:
+          toDo = timedCommand
+
+    if toDo != None:
+      if lastTimedCommand == None or toDo.repeat == True:
+        log("Executing timed command ('"+toDo.name+":"+toDo.periods+"')")
+        execute(toDo.command)
+        lastTimedCommand = toDo
+      elif lastTimedCommand.command == toDo.command:
+        log("Skipped redundant timed command ('"+toDo.name+":"+toDo.periods+"')", 4)
+    else:
+        log("No timed commands due", 4)
 
     state = read
     # kleine Pause
-    time.sleep(1)
+    time.sleep(intervalMotionDetection)
 
 except KeyboardInterrupt:
   # Programm beenden
