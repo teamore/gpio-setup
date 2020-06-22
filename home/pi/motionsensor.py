@@ -53,7 +53,7 @@ class TimedCommander:
       TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PURPLE','08:00-22:00', priority=4, repeat=False, name="Tageszeit"),
       TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_PINK','12:00-18:00', priority=3, repeat=False, name="Mahlzeit!"),
       TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_GREEN','13:12-13:20', priority=0, repeat=False, name="Test"),
-      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '13:18', priority=0, repeat=False, wakeup=True, name="Aufwachen!")
+      TimedCommand('irsend SEND_ONCE TWEEN_LIGHT KEY_POWER', '14:30,15:20,16:20', priority=0, repeat=False, wakeup=True, name="Aufwachen!")
     ]
   def run(self, active = False, forceRefresh = False):
     toDo = None
@@ -78,6 +78,8 @@ class MotionDetector:
     self.currentStatus = 0
     self.recentStatus = 0
 
+    #self.commandOff = 'for i in {1..20}; do irsend SEND_ONCE TWEEN_LIGHT KEY_DOWN && sleep 0.2s ; done && irsend SEND_ONCE TWEEN_LIGHT KEY_SUSPEND'
+    #self.commandOn = 'irsend SEND_ONCE TWEEN_LIGHT KEY_POWER && sleep 0.2s && for i in {1..20}; do irsend SEND_ONCE TWEEN_LIGHT KEY_UP && sleep 0.2s ; done'
     self.commandOff = 'irsend SEND_ONCE TWEEN_LIGHT KEY_SUSPEND'
     self.commandOn = 'irsend SEND_ONCE TWEEN_LIGHT KEY_POWER'
     self.commandInit  = 'irsend SEND_ONCE TWEEN_LIGHT KEY_FLASH'
@@ -149,8 +151,10 @@ def execute(command):
   global verbosity
   global log
   log("Executing Command: "+command+"...")
-  args = shlex.split(command+" &")
-  process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+#  args = shlex.split(command)
+#  process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+  process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+  time.sleep(0.2)
 
 def log(message, level = 2):
   global verbosity
@@ -220,8 +224,9 @@ try:
 
   while True:
     md.run()
-    tc.run(active = (md.currentStatus == 1),forceRefresh = (md.currentStatus == 1 and md.recentStatus == 0))
     time.sleep(intervalMotionDetection)
+    tc.run(active = (md.currentStatus == 1),forceRefresh = (md.currentStatus == 1 and md.recentStatus == 0))
+
 
 except KeyboardInterrupt:
   # Programm beenden
